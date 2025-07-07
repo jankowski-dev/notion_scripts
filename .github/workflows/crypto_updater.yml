@@ -2,7 +2,7 @@ name: Crypto Price Updater
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Каждые 5 минут
+    - cron: '*/10 * * * *'  # Каждые 10 минут
   workflow_dispatch:
 
 jobs:
