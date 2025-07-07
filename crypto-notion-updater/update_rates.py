@@ -28,6 +28,7 @@ CRYPTOS = {
     "ripple": "XRP",
     "solana": "SOL",
     "cardano": "ADA",
+    "tron": "TRX",
 }
 
 def get_crypto_price(coin_id, retries=3):
