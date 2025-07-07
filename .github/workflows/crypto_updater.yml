@@ -28,4 +28,4 @@ jobs:
         env:
           NOTION_TOKEN: "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"
           DATABASE_ID: "227c8f4b4994806ab6bfe68e33e914fa"
-        run: python update_crypto_prices.py
+        run: python update_rates.py
