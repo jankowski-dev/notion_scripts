@@ -37,11 +37,11 @@ def get_all_prices(retries=3):
     
     for attempt in range(retries):
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=15)
             
             if response.status_code == 200:
                 data = response.json()
-                return {coin_id: data[coin_id]['usd'] for coin_id in CRYPTOS if coin_id in data}
+                return {coin_id: float(data[coin_id]['usd']) for coin_id in CRYPTOS if coin_id in data}
             
             logging.warning(f"Attempt {attempt + 1}: Status code {response.status_code}")
             if response.status_code == 429:
@@ -57,58 +57,78 @@ def get_all_prices(retries=3):
     
     raise Exception(f"Failed to get prices after {retries} attempts")
 
-def update_notion_database():
-    """Обновляем базу данных Notion"""
+def update_notion_batch(prices):
+    """Обновляем Notion одним batch-запросом"""
     try:
         notion = Client(auth=NOTION_TOKEN)
+        now = datetime.now().isoformat()
         
-        # Получаем все цены одним запросом
-        prices = get_all_prices()
-        logging.info(f"Successfully fetched prices: {prices}")
+        # 1. Получаем все текущие записи
+        response = notion.databases.query(
+            database_id=DATABASE_ID,
+            filter={
+                "or": [
+                    {"property": "Name", "title": {"equals": symbol}}
+                    for symbol in CRYPTOS.values()
+                ]
+            }
+        )
+        
+        existing_pages = {
+            page["properties"]["Name"]["title"][0]["plain_text"]: page["id"]
+            for page in response.get("results", [])
+        }
+        
+        # 2. Подготавливаем batch-операции
+        operations = []
         
         for coin_id, symbol in CRYPTOS.items():
-            try:
-                if coin_id not in prices:
-                    logging.error(f"No price data for {symbol} ({coin_id})")
-                    continue
+            if coin_id not in prices:
+                logging.error(f"No price data for {symbol}")
+                continue
                 
-                current_price = prices[coin_id]
-                
-                results = notion.databases.query(
-                    database_id=DATABASE_ID,
-                    filter={
-                        "property": "Name",
-                        "title": {"equals": symbol}
+            price = prices[coin_id]
+            properties = {
+                "Price": {"number": price},
+                "Last Updated": {"date": {"start": now}},
+                "Symbol": {"rich_text": [{"text": {"content": coin_id}}]}
+            }
+            
+            if symbol in existing_pages:
+                # Операция обновления
+                operations.append({
+                    "update": {
+                        "page_id": existing_pages[symbol],
+                        "properties": properties
                     }
-                ).get("results")
-                
-                if results:
-                    notion.pages.update(
-                        page_id=results[0]["id"],
-                        properties={
-                            "Price": {"number": current_price},
-                            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                        }
-                    )
-                    logging.info(f"Updated {symbol} price to {current_price}")
-                else:
-                    notion.pages.create(
-                        parent={"database_id": DATABASE_ID},
-                        properties={
-                            "Name": {"title": [{"text": {"content": symbol}}]},
-                            "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                            "Price": {"number": current_price},
-                            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                        }
-                    )
-                    logging.info(f"Created new entry for {symbol} with price {current_price}")
-                    
-            except Exception as e:
-                logging.error(f"Error processing {symbol}: {str(e)}", exc_info=True)
-                
+                })
+            else:
+                # Операция создания
+                properties["Name"] = {"title": [{"text": {"content": symbol}}]}
+                operations.append({
+                    "create": {
+                        "parent": {"database_id": DATABASE_ID},
+                        "properties": properties
+                    }
+                })
+        
+        # 3. Выполняем batch-запрос
+        if operations:
+            notion.request(
+                path="batch",
+                method="PATCH",
+                body={"operations": operations}
+            )
+            logging.info(f"Successfully updated {len(operations)} records in Notion")
+        
     except Exception as e:
-        logging.critical("Fatal error in Notion update", exc_info=True)
+        logging.critical("Fatal error in batch update", exc_info=True)
         raise
 
 if __name__ == "__main__":
-    update_notion_database()
+    try:
+        prices = get_all_prices()
+        logging.info(f"Fetched prices: {prices}")
+        update_notion_batch(prices)
+    except Exception as e:
+        logging.error(f"Script failed: {str(e)}", exc_info=True)
