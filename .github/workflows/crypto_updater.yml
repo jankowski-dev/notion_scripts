@@ -26,6 +26,6 @@ jobs:
           
       - name: Run price updater
         env:
-          NOTION_TOKEN: "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"
-          DATABASE_ID: "227c8f4b4994806ab6bfe68e33e914fa"
+        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        DATABASE_ID: ${{ secrets.DATABASE_ID }}
         run: python crypto-notion-updater/update_rates.py
