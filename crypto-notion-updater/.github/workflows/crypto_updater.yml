@@ -1,0 +1,29 @@
+name: Crypto Price Updater
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Каждые 5 минут
+  workflow_dispatch:
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests notion-client python-dotenv
+          
+      - name: Run price updater
+        env:
+          NOTION_TOKEN: "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"
+          DATABASE_ID: "227c8f4b4994806ab6bfe68e33e914fa"
+        run: python update_crypto_prices.py
