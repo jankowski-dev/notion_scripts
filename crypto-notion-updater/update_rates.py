@@ -28,6 +28,7 @@ CRYPTOS = {
     "solana": "SOL",
     "cardano": "ADA",
     "tron": "TRX",
+    "spark-2": "SPK"
 }
 
 def get_all_prices(retries=3):
