@@ -2,8 +2,10 @@ name: Crypto Price Updater
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # Каждые 10 минут
-  workflow_dispatch:
+    - cron: '*/10 * * * *'  # Автоматическое обновление каждые 10 минут
+  workflow_dispatch:        # Ручной запуск через UI GitHub
+  repository_dispatch:      # Для запуска через API
+    types: [manual-update]  # Тип события для ручного запуска
 
 jobs:
   update-prices:
@@ -18,14 +20,12 @@ jobs:
           python-version: '3.10'
           
       - name: Install dependencies
-        working-directory: ./crypto-notion-updater
         run: |
           python -m pip install --upgrade pip
           pip install requests notion-client python-dotenv
           
       - name: Run price updater
-        working-directory: ./crypto-notion-updater
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           DATABASE_ID: ${{ secrets.DATABASE_ID }}
-        run: python update_rates.py
+        run: python crypto-notion-updater/update_rates.py
