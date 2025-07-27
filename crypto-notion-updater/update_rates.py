@@ -29,7 +29,10 @@ CRYPTOS = {
     "cardano": "ADA",
     "tron": "TRX",
     "spark-2": "SPK",
-    "tether": "USDT"
+    "tether": "USDT",
+    "zora": "ZORA",
+    "golem": "GLM",
+    "vine": "VINE"
 }
 
 def get_all_prices(retries=3):
