@@ -32,7 +32,8 @@ CRYPTOS = {
     "tether": "USDT",
     "zora": "ZORA",
     "golem": "GLM",
-    "vine": "VINE"
+    "vine": "VINE",
+    "codatta": "codatta"
 }
 
 def get_all_prices(retries=3):
