@@ -33,7 +33,8 @@ CRYPTOS = {
     "zora": "ZORA",
     "golem": "GLM",
     "vine": "VINE",
-    "codatta": "codatta"
+    "codatta": "codatta",
+    "block": "block-4"
 }
 
 def get_all_prices(retries=3):
