@@ -34,7 +34,7 @@ CRYPTOS = {
     "golem": "GLM",
     "vine": "VINE",
     "codatta": "codatta",
-    "block": "block-4"
+    "block-4": "block"
 }
 
 def get_all_prices(retries=3):
