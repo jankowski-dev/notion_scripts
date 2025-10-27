@@ -65,15 +65,75 @@ def get_all_prices(retries=3):
     
     raise Exception(f"Failed to get prices after {retries} attempts")
 
+def get_existing_pages(notion):
+    """Получаем все существующие страницы и создаем словарь для поиска"""
+    existing_pages = {}
+    start_cursor = None
+    
+    try:
+        while True:
+            # Получаем страницы пачками
+            query_params = {
+                "database_id": DATABASE_ID,
+                "page_size": 100
+            }
+            if start_cursor:
+                query_params["start_cursor"] = start_cursor
+                
+            response = notion.databases.query(**query_params)
+            pages = response.get("results", [])
+            
+            # Обрабатываем каждую страницу
+            for page in pages:
+                try:
+                    # Получаем название из свойства Name
+                    name_property = page.get("properties", {}).get("Name", {})
+                    if name_property.get("title"):
+                        page_name = name_property["title"][0].get("text", {}).get("content", "").strip()
+                        if page_name:
+                            existing_pages[page_name.upper()] = page["id"]
+                            logging.debug(f"Found existing page: {page_name} -> {page['id']}")
+                    
+                    # Дополнительно ищем по свойству Symbol (на случай если поиск по Name не работает)
+                    symbol_property = page.get("properties", {}).get("Symbol", {})
+                    if symbol_property.get("rich_text"):
+                        symbol_name = symbol_property["rich_text"][0].get("text", {}).get("content", "").strip()
+                        if symbol_name and symbol_name.upper() not in existing_pages:
+                            existing_pages[symbol_name.upper()] = page["id"]
+                            logging.debug(f"Found existing page by symbol: {symbol_name} -> {page['id']}")
+                            
+                except Exception as e:
+                    logging.warning(f"Error processing page {page.get('id')}: {e}")
+                    continue
+            
+            # Проверяем есть ли еще страницы
+            if response.get("has_more") and response.get("next_cursor"):
+                start_cursor = response.get("next_cursor")
+            else:
+                break
+                
+    except Exception as e:
+        logging.error(f"Error fetching existing pages: {e}")
+    
+    logging.info(f"Found {len(existing_pages)} existing pages in database")
+    return existing_pages
+
 def update_notion_database():
     """Обновляем базу данных Notion"""
     try:
-        # Инициализируем клиент с явным указанием версии API
+        # Инициализируем клиент
         notion = Client(auth=NOTION_TOKEN)
+        
+        # Получаем все существующие страницы ОДИН РАЗ
+        existing_pages = get_existing_pages(notion)
+        logging.info(f"Existing pages mapped: {list(existing_pages.keys())}")
         
         # Получаем все цены одним запросом
         prices = get_all_prices()
         logging.info(f"Successfully fetched prices: {prices}")
+        
+        updated_count = 0
+        created_count = 0
         
         for coin_id, symbol in CRYPTOS.items():
             try:
@@ -82,57 +142,80 @@ def update_notion_database():
                     continue
                 
                 current_price = prices[coin_id]
+                symbol_upper = symbol.upper()
                 
-                # СПОСОБ 1: Используем прямой HTTP-запрос как запасной вариант
-                try:
-                    # Попробуем сначала через официальный клиент
-                    response = notion.databases.query(
-                        **{
-                            "database_id": DATABASE_ID,
-                            "filter": {
-                                "property": "Name",
-                                "title": {
-                                    "equals": symbol
+                # Ищем существующую страницу по разным ключам
+                page_id = None
+                
+                # Пробуем найти по символу (BTC, ETH и т.д.)
+                if symbol_upper in existing_pages:
+                    page_id = existing_pages[symbol_upper]
+                    logging.debug(f"Found {symbol} by symbol: {page_id}")
+                
+                # Если не нашли, пробуем найти по полному имени крипты
+                if not page_id and coin_id.upper() in existing_pages:
+                    page_id = existing_pages[coin_id.upper()]
+                    logging.debug(f"Found {symbol} by coin_id: {page_id}")
+                
+                if page_id:
+                    # ОБНОВЛЯЕМ существующую запись
+                    try:
+                        notion.pages.update(
+                            **{
+                                "page_id": page_id,
+                                "properties": {
+                                    "Price": {"number": float(current_price)},
+                                    "Last Updated": {"date": {"start": datetime.now().isoformat()}}
                                 }
                             }
-                        }
-                    )
-                    results = response.get("results", [])
-                    
-                except AttributeError:
-                    # Если не работает .query, используем прямой подход
-                    logging.info(f"Using alternative method for {symbol}")
-                    results = []
-                    
-                if results:
-                    # Обновляем существующую запись
-                    notion.pages.update(
-                        **{
-                            "page_id": results[0]["id"],
-                            "properties": {
-                                "Price": {"number": float(current_price)},
-                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                            }
-                        }
-                    )
-                    logging.info(f"Updated {symbol} price to {current_price}")
+                        )
+                        updated_count += 1
+                        logging.info(f"✅ Updated {symbol} price to {current_price}")
+                        
+                    except Exception as update_error:
+                        logging.error(f"Failed to update {symbol}: {update_error}")
+                        # Пробуем создать новую запись если обновление не удалось
+                        try:
+                            notion.pages.create(
+                                **{
+                                    "parent": {"database_id": DATABASE_ID},
+                                    "properties": {
+                                        "Name": {"title": [{"text": {"content": symbol}}]},
+                                        "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
+                                        "Price": {"number": float(current_price)},
+                                        "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                                    }
+                                }
+                            )
+                            created_count += 1
+                            logging.info(f"🆕 Created new entry for {symbol} with price {current_price} (update failed)")
+                        except Exception as create_error:
+                            logging.error(f"Failed to create {symbol}: {create_error}")
+                
                 else:
-                    # Создаем новую запись
-                    notion.pages.create(
-                        **{
-                            "parent": {"database_id": DATABASE_ID},
-                            "properties": {
-                                "Name": {"title": [{"text": {"content": symbol}}]},
-                                "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                                "Price": {"number": float(current_price)},
-                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                    # СОЗДАЕМ новую запись
+                    try:
+                        notion.pages.create(
+                            **{
+                                "parent": {"database_id": DATABASE_ID},
+                                "properties": {
+                                    "Name": {"title": [{"text": {"content": symbol}}]},
+                                    "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
+                                    "Price": {"number": float(current_price)},
+                                    "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                                }
                             }
-                        }
-                    )
-                    logging.info(f"Created new entry for {symbol} with price {current_price}")
-                    
+                        )
+                        created_count += 1
+                        logging.info(f"🆕 Created new entry for {symbol} with price {current_price}")
+                    except Exception as create_error:
+                        logging.error(f"Failed to create {symbol}: {create_error}")
+                        
             except Exception as e:
                 logging.error(f"Error processing {symbol}: {str(e)}", exc_info=True)
+        
+        # Финальная статистика
+        logging.info(f"🎯 Update completed: {updated_count} updated, {created_count} created, {len(CRYPTOS) - updated_count - created_count} failed")
                 
     except Exception as e:
         logging.critical("Fatal error in Notion update", exc_info=True)
