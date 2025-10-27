@@ -2,6 +2,7 @@ import os
 import requests
 import logging
 from datetime import datetime
+from time import sleep  # Добавлен импорт sleep
 from notion_client import Client
 from dotenv import load_dotenv
 
@@ -23,7 +24,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
 CRYPTOS = {
     "bitcoin": "BTC",
-    "ethereum": "ETH",
+    "ethereum": "ETH", 
     "ripple": "XRP",
     "solana": "SOL",
     "cardano": "ADA",
@@ -81,31 +82,43 @@ def update_notion_database():
                 
                 current_price = prices[coin_id]
                 
-                results = notion.databases.query(
-                    database_id=DATABASE_ID,
-                    filter={
-                        "property": "Name",
-                        "title": {"equals": symbol}
+                # ИСПРАВЛЕННЫЙ ЗАПРОС - используем правильный синтаксис
+                response = notion.databases.query(
+                    **{
+                        "database_id": DATABASE_ID,
+                        "filter": {
+                            "property": "Name",
+                            "title": {
+                                "equals": symbol
+                            }
+                        }
                     }
-                ).get("results")
+                )
+                results = response.get("results", [])
                 
                 if results:
+                    # Обновляем существующую запись
                     notion.pages.update(
-                        page_id=results[0]["id"],
-                        properties={
-                            "Price": {"number": current_price},
-                            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                        **{
+                            "page_id": results[0]["id"],
+                            "properties": {
+                                "Price": {"number": current_price},
+                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                            }
                         }
                     )
                     logging.info(f"Updated {symbol} price to {current_price}")
                 else:
+                    # Создаем новую запись
                     notion.pages.create(
-                        parent={"database_id": DATABASE_ID},
-                        properties={
-                            "Name": {"title": [{"text": {"content": symbol}}]},
-                            "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                            "Price": {"number": current_price},
-                            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                        **{
+                            "parent": {"database_id": DATABASE_ID},
+                            "properties": {
+                                "Name": {"title": [{"text": {"content": symbol}}]},
+                                "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
+                                "Price": {"number": current_price},
+                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                            }
                         }
                     )
                     logging.info(f"Created new entry for {symbol} with price {current_price}")
