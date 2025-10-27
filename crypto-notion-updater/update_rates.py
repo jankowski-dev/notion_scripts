@@ -2,7 +2,6 @@ import os
 import requests
 import logging
 from datetime import datetime
-from time import sleep
 from notion_client import Client
 from dotenv import load_dotenv
 
@@ -24,7 +23,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
 CRYPTOS = {
     "bitcoin": "BTC",
-    "ethereum": "ETH", 
+    "ethereum": "ETH",
     "ripple": "XRP",
     "solana": "SOL",
     "cardano": "ADA",
@@ -82,19 +81,13 @@ def update_notion_database():
                 
                 current_price = prices[coin_id]
                 
-                # ИСПРАВЛЕННАЯ СТРОКА - используем новый синтаксис
-                response = notion.databases.query(
-                    **{
-                        "database_id": DATABASE_ID,
-                        "filter": {
-                            "property": "Name",
-                            "title": {
-                                "equals": symbol
-                            }
-                        }
+                results = notion.databases.query(
+                    database_id=DATABASE_ID,
+                    filter={
+                        "property": "Name",
+                        "title": {"equals": symbol}
                     }
-                )
-                results = response.get("results", [])
+                ).get("results")
                 
                 if results:
                     notion.pages.update(
