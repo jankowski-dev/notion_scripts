@@ -83,24 +83,53 @@ def get_existing_pages(notion):
             response = notion.databases.query(**query_params)
             pages = response.get("results", [])
             
+            logging.info(f"🔍 Processing {len(pages)} pages from database")
+            
             # Обрабатываем каждую страницу
             for page in pages:
                 try:
-                    # Получаем название из свойства Name
-                    name_property = page.get("properties", {}).get("Name", {})
-                    if name_property.get("title"):
-                        page_name = name_property["title"][0].get("text", {}).get("content", "").strip()
-                        if page_name:
-                            existing_pages[page_name.upper()] = page["id"]
-                            logging.debug(f"Found existing page: {page_name} -> {page['id']}")
+                    page_id = page.get("id")
+                    properties = page.get("properties", {})
                     
-                    # Дополнительно ищем по свойству Symbol (на случай если поиск по Name не работает)
-                    symbol_property = page.get("properties", {}).get("Symbol", {})
+                    # ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ: выведем все свойства страницы
+                    logging.info(f"📄 Page ID: {page_id}")
+                    for prop_name, prop_value in properties.items():
+                        logging.info(f"   Property '{prop_name}': {prop_value}")
+                    
+                    # Способ 1: Ищем название в свойстве Name (title)
+                    name_property = properties.get("Name", {})
+                    if name_property.get("title"):
+                        title_list = name_property["title"]
+                        if title_list and len(title_list) > 0:
+                            page_name = title_list[0].get("text", {}).get("content", "").strip()
+                            if page_name:
+                                existing_pages[page_name.upper()] = page_id
+                                logging.info(f"✅ Found by Name: '{page_name}' -> {page_id}")
+                                continue
+                    
+                    # Способ 2: Ищем в свойстве Symbol (rich_text)
+                    symbol_property = properties.get("Symbol", {})
                     if symbol_property.get("rich_text"):
-                        symbol_name = symbol_property["rich_text"][0].get("text", {}).get("content", "").strip()
-                        if symbol_name and symbol_name.upper() not in existing_pages:
-                            existing_pages[symbol_name.upper()] = page["id"]
-                            logging.debug(f"Found existing page by symbol: {symbol_name} -> {page['id']}")
+                        rich_text_list = symbol_property["rich_text"]
+                        if rich_text_list and len(rich_text_list) > 0:
+                            symbol_name = rich_text_list[0].get("text", {}).get("content", "").strip()
+                            if symbol_name:
+                                existing_pages[symbol_name.upper()] = page_id
+                                logging.info(f"✅ Found by Symbol: '{symbol_name}' -> {page_id}")
+                                continue
+                    
+                    # Способ 3: Ищем в других текстовых свойствах
+                    for prop_name, prop_value in properties.items():
+                        if prop_value.get("rich_text"):
+                            rich_text_list = prop_value["rich_text"]
+                            if rich_text_list and len(rich_text_list) > 0:
+                                text_content = rich_text_list[0].get("text", {}).get("content", "").strip().upper()
+                                if text_content in [s.upper() for s in CRYPTOS.values()]:
+                                    existing_pages[text_content] = page_id
+                                    logging.info(f"✅ Found by property '{prop_name}': '{text_content}' -> {page_id}")
+                                    break
+                    
+                    logging.warning(f"❌ Could not find identifiable name for page {page_id}")
                             
                 except Exception as e:
                     logging.warning(f"Error processing page {page.get('id')}: {e}")
@@ -115,7 +144,8 @@ def get_existing_pages(notion):
     except Exception as e:
         logging.error(f"Error fetching existing pages: {e}")
     
-    logging.info(f"Found {len(existing_pages)} existing pages in database")
+    logging.info(f"🎯 Total existing pages mapped: {len(existing_pages)}")
+    logging.info(f"📋 Found symbols: {list(existing_pages.keys())}")
     return existing_pages
 
 def update_notion_database():
@@ -126,36 +156,29 @@ def update_notion_database():
         
         # Получаем все существующие страницы ОДИН РАЗ
         existing_pages = get_existing_pages(notion)
-        logging.info(f"Existing pages mapped: {list(existing_pages.keys())}")
         
         # Получаем все цены одним запросом
         prices = get_all_prices()
-        logging.info(f"Successfully fetched prices: {prices}")
+        logging.info(f"💰 Successfully fetched prices: {prices}")
         
         updated_count = 0
         created_count = 0
+        error_count = 0
         
         for coin_id, symbol in CRYPTOS.items():
             try:
                 if coin_id not in prices:
-                    logging.error(f"No price data for {symbol} ({coin_id})")
+                    logging.error(f"❌ No price data for {symbol} ({coin_id})")
+                    error_count += 1
                     continue
                 
                 current_price = prices[coin_id]
                 symbol_upper = symbol.upper()
                 
-                # Ищем существующую страницу по разным ключам
-                page_id = None
+                logging.info(f"🔍 Looking for existing page: {symbol} ({symbol_upper})")
                 
-                # Пробуем найти по символу (BTC, ETH и т.д.)
-                if symbol_upper in existing_pages:
-                    page_id = existing_pages[symbol_upper]
-                    logging.debug(f"Found {symbol} by symbol: {page_id}")
-                
-                # Если не нашли, пробуем найти по полному имени крипты
-                if not page_id and coin_id.upper() in existing_pages:
-                    page_id = existing_pages[coin_id.upper()]
-                    logging.debug(f"Found {symbol} by coin_id: {page_id}")
+                # Ищем существующую страницу
+                page_id = existing_pages.get(symbol_upper)
                 
                 if page_id:
                     # ОБНОВЛЯЕМ существующую запись
@@ -170,27 +193,11 @@ def update_notion_database():
                             }
                         )
                         updated_count += 1
-                        logging.info(f"✅ Updated {symbol} price to {current_price}")
+                        logging.info(f"✅ UPDATED {symbol} price to {current_price} (page: {page_id})")
                         
                     except Exception as update_error:
-                        logging.error(f"Failed to update {symbol}: {update_error}")
-                        # Пробуем создать новую запись если обновление не удалось
-                        try:
-                            notion.pages.create(
-                                **{
-                                    "parent": {"database_id": DATABASE_ID},
-                                    "properties": {
-                                        "Name": {"title": [{"text": {"content": symbol}}]},
-                                        "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                                        "Price": {"number": float(current_price)},
-                                        "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                                    }
-                                }
-                            )
-                            created_count += 1
-                            logging.info(f"🆕 Created new entry for {symbol} with price {current_price} (update failed)")
-                        except Exception as create_error:
-                            logging.error(f"Failed to create {symbol}: {create_error}")
+                        logging.error(f"❌ Failed to update {symbol}: {update_error}")
+                        error_count += 1
                 
                 else:
                     # СОЗДАЕМ новую запись
@@ -207,18 +214,25 @@ def update_notion_database():
                             }
                         )
                         created_count += 1
-                        logging.info(f"🆕 Created new entry for {symbol} with price {current_price}")
+                        logging.info(f"🆕 CREATED new entry for {symbol} with price {current_price}")
                     except Exception as create_error:
-                        logging.error(f"Failed to create {symbol}: {create_error}")
+                        logging.error(f"❌ Failed to create {symbol}: {create_error}")
+                        error_count += 1
                         
             except Exception as e:
-                logging.error(f"Error processing {symbol}: {str(e)}", exc_info=True)
+                logging.error(f"❌ Error processing {symbol}: {str(e)}", exc_info=True)
+                error_count += 1
         
         # Финальная статистика
-        logging.info(f"🎯 Update completed: {updated_count} updated, {created_count} created, {len(CRYPTOS) - updated_count - created_count} failed")
+        logging.info(f"🎯 UPDATE SUMMARY: {updated_count} updated, {created_count} created, {error_count} errors")
+        
+        # Если все записи создаются заново, выведем предупреждение
+        if updated_count == 0 and created_count > 0:
+            logging.warning("🚨 WARNING: All entries were created new! Existing pages were not found.")
+            logging.warning("💡 Check if the property names in your Notion database match the code.")
                 
     except Exception as e:
-        logging.critical("Fatal error in Notion update", exc_info=True)
+        logging.critical("💥 Fatal error in Notion update", exc_info=True)
         raise
 
 if __name__ == "__main__":
