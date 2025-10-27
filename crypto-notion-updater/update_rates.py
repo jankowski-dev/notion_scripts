@@ -4,8 +4,6 @@ import logging
 from datetime import datetime
 from time import sleep
 from dotenv import load_dotenv
-import asyncio
-import aiohttp
 import concurrent.futures
 
 # Настройка логгирования
@@ -113,59 +111,46 @@ def get_all_existing_pages():
     logging.info(f"Found {len(page_map)} existing pages")
     return page_map
 
-def update_page_batch(updates):
-    """Обновляем несколько страниц ПАРАЛЛЕЛЬНО"""
-    def update_single_page(update_data):
-        page_id, price, symbol = update_data
-        url = f"https://api.notion.com/v1/pages/{page_id}"
-        
-        payload = {
-            "properties": {
-                "Price": {"number": float(price)},
-                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-            }
+def update_single_page(update_data):
+    """Обновляет одну страницу"""
+    page_id, price, symbol = update_data
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    
+    payload = {
+        "properties": {
+            "Price": {"number": float(price)},
+            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
         }
-        
-        try:
-            response = requests.patch(url, json=payload, headers=NOTION_HEADERS, timeout=10)
-            response.raise_for_status()
-            return symbol, True, None
-        except Exception as e:
-            return symbol, False, str(e)
+    }
     
-    # Используем ThreadPool для параллельных запросов
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(update_single_page, updates))
-    
-    return results
+    try:
+        response = requests.patch(url, json=payload, headers=NOTION_HEADERS, timeout=10)
+        response.raise_for_status()
+        return symbol, True, None
+    except Exception as e:
+        return symbol, False, str(e)
 
-def create_page_batch(creations):
-    """Создаем несколько страниц ПАРАЛЛЕЛЬНО"""
-    def create_single_page(create_data):
-        symbol, coin_id, price = create_data
-        url = "https://api.notion.com/v1/pages"
-        
-        payload = {
-            "parent": {"database_id": DATABASE_ID},
-            "properties": {
-                "Name": {"title": [{"text": {"content": symbol}}]},
-                "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                "Price": {"number": float(price)},
-                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-            }
+def create_single_page(create_data):
+    """Создает одну страницу"""
+    symbol, coin_id, price = create_data
+    url = "https://api.notion.com/v1/pages"
+    
+    payload = {
+        "parent": {"database_id": DATABASE_ID},
+        "properties": {
+            "Name": {"title": [{"text": {"content": symbol}}]},
+            "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
+            "Price": {"number": float(price)},
+            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
         }
-        
-        try:
-            response = requests.post(url, json=payload, headers=NOTION_HEADERS, timeout=10)
-            response.raise_for_status()
-            return symbol, True, None
-        except Exception as e:
-            return symbol, False, str(e)
+    }
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        results = list(executor.map(create_single_page, creations))
-    
-    return results
+    try:
+        response = requests.post(url, json=payload, headers=NOTION_HEADERS, timeout=10)
+        response.raise_for_status()
+        return symbol, True, None
+    except Exception as e:
+        return symbol, False, str(e)
 
 def update_notion_database():
     """Обновляем базу данных Notion ОПТИМИЗИРОВАННО"""
@@ -200,8 +185,11 @@ def update_notion_database():
         # Шаг 4: ВЫПОЛНЯЕМ ВСЕ ОБНОВЛЕНИЯ ПАРАЛЛЕЛЬНО
         updated_count = 0
         if updates_to_do:
-            update_results = update_page_batch(updates_to_do)
-            for symbol, success, error in update_results:
+            # Используем ThreadPool для параллельных запросов
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                results = list(executor.map(update_single_page, updates_to_do))
+            
+            for symbol, success, error in results:
                 if success:
                     updated_count += 1
                     logging.info(f"✅ Updated {symbol}")
@@ -211,8 +199,10 @@ def update_notion_database():
         # Шаг 5: ВЫПОЛНЯЕМ ВСЕ СОЗДАНИЯ ПАРАЛЛЕЛЬНО  
         created_count = 0
         if creations_to_do:
-            create_results = create_page_batch(creations_to_do)
-            for symbol, success, error in create_results:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                results = list(executor.map(create_single_page, creations_to_do))
+            
+            for symbol, success, error in results:
                 if success:
                     created_count += 1
                     logging.info(f"🆕 Created {symbol}")
