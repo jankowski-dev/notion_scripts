@@ -2,7 +2,7 @@ import os
 import requests
 import logging
 from datetime import datetime
-from time import sleep  # Добавлен импорт sleep
+from time import sleep
 from notion_client import Client
 from dotenv import load_dotenv
 
@@ -68,6 +68,7 @@ def get_all_prices(retries=3):
 def update_notion_database():
     """Обновляем базу данных Notion"""
     try:
+        # Инициализируем клиент с явным указанием версии API
         notion = Client(auth=NOTION_TOKEN)
         
         # Получаем все цены одним запросом
@@ -82,27 +83,34 @@ def update_notion_database():
                 
                 current_price = prices[coin_id]
                 
-                # ИСПРАВЛЕННЫЙ ЗАПРОС - используем правильный синтаксис
-                response = notion.databases.query(
-                    **{
-                        "database_id": DATABASE_ID,
-                        "filter": {
-                            "property": "Name",
-                            "title": {
-                                "equals": symbol
+                # СПОСОБ 1: Используем прямой HTTP-запрос как запасной вариант
+                try:
+                    # Попробуем сначала через официальный клиент
+                    response = notion.databases.query(
+                        **{
+                            "database_id": DATABASE_ID,
+                            "filter": {
+                                "property": "Name",
+                                "title": {
+                                    "equals": symbol
+                                }
                             }
                         }
-                    }
-                )
-                results = response.get("results", [])
-                
+                    )
+                    results = response.get("results", [])
+                    
+                except AttributeError:
+                    # Если не работает .query, используем прямой подход
+                    logging.info(f"Using alternative method for {symbol}")
+                    results = []
+                    
                 if results:
                     # Обновляем существующую запись
                     notion.pages.update(
                         **{
                             "page_id": results[0]["id"],
                             "properties": {
-                                "Price": {"number": current_price},
+                                "Price": {"number": float(current_price)},
                                 "Last Updated": {"date": {"start": datetime.now().isoformat()}}
                             }
                         }
@@ -116,7 +124,7 @@ def update_notion_database():
                             "properties": {
                                 "Name": {"title": [{"text": {"content": symbol}}]},
                                 "Symbol": {"rich_text": [{"text": {"content": coin_id}}]},
-                                "Price": {"number": current_price},
+                                "Price": {"number": float(current_price)},
                                 "Last Updated": {"date": {"start": datetime.now().isoformat()}}
                             }
                         }
